@@ -1,0 +1,12 @@
+*.pyc
+out
+.taco/results/
+.idea
+*egg-info
+zzz*
+dataset
+!dataset/.gitkeep
+experiment
+experiment/.gitkeep
+MUJOCO_LOG.TXT
+slurm*.out

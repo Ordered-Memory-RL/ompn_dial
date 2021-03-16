@@ -1,0 +1,13 @@
+--hidden_size=64
+--max_steps_per_sketch=100
+--mode=compile
+--sketch_lengths=4
+--compile_batch_size=64
+--compile_beta_b=0.1
+--compile_beta_z=0.1
+--compile_eval_freq=20
+--compile_latent=gaussian
+--compile_lr=0.001
+--compile_max_segs=4
+--compile_prior_rate=3.0
+--compile_train_steps=6000

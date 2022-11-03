@@ -1,5 +1,5 @@
 # OMRL for `jacopinpad`
-To install run `pip install -e .`. You need to install `mojuco-py`.
+To install run `pip install -r requirements.txt; pip install -e .`. You need to install `mojuco-py`.
 # Generate Demo
 ```
 python main.py --mode demo --sketch_lengths 4 --demo_episodes 1400

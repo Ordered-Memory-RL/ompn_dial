@@ -15,6 +15,7 @@ import random
 from settings import EXP_DIR, CURR_VERSION
 import omrl.imitation as IL
 from taco import train_taco
+from ours import train_ours
 import demo
 from compile import train_compile
 
@@ -96,7 +97,9 @@ def main(_):
     elif FLAGS.mode == 'compile':
         train_compile.main(training_folder=trainig_folder)
     elif FLAGS.mode == 'taco':
-        train_taco.main(training_folder=trainig_folder)
+        train_ours.main(training_folder=trainig_folder)
+    elif FLAGS.mode == 'ours':
+        train_ours.main(training_folder=trainig_folder)
     else:
         logging.fatal('Improper Mode {}'.format(FLAGS.mode))
     logging.info('Done')

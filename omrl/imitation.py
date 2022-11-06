@@ -38,7 +38,7 @@ def run_batch(batch: DictList,
               sketch_lengths,
               bot: ModelBot,
               mode='train') \
-        -> (DictList, torch.Tensor):
+        -> DictList:
     """
     :param batch: DictList object [bsz, seqlen]
     :param bot:  A model Bot

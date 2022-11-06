@@ -21,7 +21,7 @@ DEBUG = False
 if not DEBUG:
     FLAGS = flags.FLAGS
     flags.DEFINE_float("ours_lr", default=0.001, help="ours learning rate")
-    flags.DEFINE_integer("ours_batch_size", default=16, help="ours batch size")
+    flags.DEFINE_integer("ours_batch_size", default=32, help="ours batch size")
     flags.DEFINE_integer("ours_train_steps", default=40000, help="ours train steps")
     flags.DEFINE_integer("ours_eval_freq", default=100, help="ours eval freq")
     flags.DEFINE_float("ours_dropout", default=0.3, help="Initial dropout rate")

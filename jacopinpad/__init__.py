@@ -1,8 +1,3 @@
-try:
-    import free_mjc
-except ImportError:
-    print('Use MOJUCO key')
-
 from gym.envs.registration import register
 from .jacopinpad_collect import *
 from jacopinpad.jacopinpad_gym import jacopinpad

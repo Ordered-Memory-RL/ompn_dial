@@ -36,7 +36,7 @@ flags.DEFINE_enum('env_arch', enum_values=['sketch', 'noenv', 'grusketch'],
 # Misc
 flags.DEFINE_bool('debug', default=False, help='Flag for debug mode')
 flags.DEFINE_enum('mode', default='IL', enum_values=['IL', 'demo', 'compile',
-                                                     'taco'],
+                                                     'taco', 'ours'],
                   help='choosing between IL and RL')
 flags.DEFINE_string('experiment', default=None, help='Name of experiment')
 flags.DEFINE_bool('cuda', default=False, help='Use cuda')

@@ -7,164 +7,32 @@ import gym
 from mujoco_py.builder import MujocoException
 import time
 
-NEG_INF = -100000000.
+NEG_INF = -100000000.0
 ZERO = 1e-32
 
 
-def tac_forward(action_logprobs, stop_logprobs, lengths, subtask_lengths):
-    """
-    Args:
-        action_logprobs: [bsz, len, tasks]
-        stop_logprobs: [bsz, len, tasks,  2]
-        lengths: [bsz]
-        subtask_lengths [bsz]
-    Returns:
-        log_alphas [bsz, len, tasks]
-        dirs [bsz, len, tasks]: If dirs[bsz, t, task] = 0, then alpha[b, t, task] is formed by nonstop.
-        otherwise it's the descendent of child.
-    """
-    bsz, length, nb_tasks = action_logprobs.shape[0], action_logprobs.shape[1], action_logprobs.shape[2]
 
-    # Initial log alpha
-    init_alpha = torch.zeros([bsz, nb_tasks], device=action_logprobs.device)
-    init_alpha[:, 0] = action_logprobs[:, 0, 0].exp()
-    zeros = torch.tensor(ZERO, device=init_alpha.device)
-    alphas = [init_alpha]
-    init_dir = torch.zeros([bsz, nb_tasks], device=action_logprobs.device)
-    dirs = [init_dir]
-    action_probs = action_logprobs.exp()
-    stop_probs = stop_logprobs.exp()
-    for t in range(1, length):
-        prev_alpha = alphas[-1] # [bsz, nb_task]
-        nonstop = prev_alpha * stop_probs[:, t, :, 0]
-        stop = prev_alpha * stop_probs[:, t, :, 1]
-        stop = torch.cat([zeros.repeat(bsz, 1), stop[:, :-1]], dim=-1)
-        untillnow = nonstop + stop
-        curr_dir = (stop > nonstop).float()
-        alpha = action_probs[:, t, :] * untillnow
-        subtask_mask = torch.arange(subtask_lengths.max(),
-                                    device=subtask_lengths.device)[None, :] < subtask_lengths[:, None]
-        alpha = alpha.masked_fill(~subtask_mask, zeros)
+def train_batch(
+    model: ModularPolicy,
+    batch: list,
+):
+    """Return log probs of a trajectory"""
+    start_state, end_state, start, delta, goal, ctx, model_inp = batch
 
-        # prevent underflow
-        alpha = alpha / torch.sum(alpha, dim=-1, keepdim=True)
+    pred = model(model_inp)
 
-        # Mask time
-        alpha = torch.where((t < lengths).unsqueeze(-1), alpha, zeros.repeat(bsz, nb_tasks))
-        curr_dir = torch.where((t < lengths).unsqueeze(-1), curr_dir, zeros.repeat(bsz, nb_tasks))
-        alphas.append(alpha)
-        dirs.append(curr_dir)
+    return torch.nn.functional.mse_loss(pred, end_state)
+    
 
-    # [bsz, len, tasks]
-    return torch.stack(alphas, dim=1), torch.stack(dirs, dim=1)
-
-
-def tac_forward_log(action_logprobs, stop_logprobs, lengths, subtask_lengths):
-    """
-    Args:
-        action_logprobs: [bsz, len, tasks]
-        stop_logprobs: [bsz, len, tasks,  2]
-        lengths: [bsz]
-        subtask_lengths [bsz]
-    Returns:
-        log_alphas [bsz, len, tasks]
-    """
-    bsz, length, nb_tasks = action_logprobs.shape[0], action_logprobs.shape[1], action_logprobs.shape[2]
-
-    # Initial log alpha
-    init_log_alpha = torch.ones([bsz, nb_tasks], device=action_logprobs.device) * NEG_INF
-    init_log_alpha[:, 0] = action_logprobs[:, 0, 0]
-    neg_inf = torch.tensor(NEG_INF, device=init_log_alpha.device)
-    log_alphas = [init_log_alpha]
-    for t in range(1, length):
-        prev_log_alpha = log_alphas[-1] # [bsz, nb_task]
-        lognonstop = prev_log_alpha + stop_logprobs[:, t, :, 0]
-        logstop = prev_log_alpha + stop_logprobs[:, t, :, 1]
-        logstop = torch.cat([neg_inf.repeat(bsz, 1), logstop[:, :-1]], dim=-1)
-        loguntillnow = torch.logsumexp(torch.stack([logstop, lognonstop], dim=-1), dim=-1)
-        log_alpha = action_logprobs[:, t, :] + loguntillnow
-        subtask_mask = torch.arange(subtask_lengths.max(),
-                                    device=subtask_lengths.device)[None, :] < subtask_lengths[:, None]
-        log_alpha = log_alpha.masked_fill(~subtask_mask, NEG_INF)
-        log_alpha = torch.where((t < lengths).unsqueeze(-1), log_alpha, neg_inf.repeat(bsz, nb_tasks))
-        log_alphas.append(log_alpha)
-
-    # [bsz, len, tasks]
-    return torch.stack(log_alphas, dim=1)
-
-
-def teacherforce_batch(modular_p: ModularPolicy, trajs: DictList, lengths, subtask_lengths,
-                       dropout_p, decode=False):
-    """ Return log probs of a trajectory """
-    dropout_p = 0. if decode else dropout_p
-    unique_tasks = set()
-    for subtask in trajs.tasks:
-        for task_id in subtask:
-            task_id = task_id.item()
-            if not task_id in unique_tasks:
-                unique_tasks.add(task_id)
-    unique_tasks = list(unique_tasks)
-
-    # Forward for all unique task
-    # task_results [bsz, length, all_tasks]
-    states = trajs.states.float()
-    targets = trajs.actions.float()
-    all_task_results = DictList()
-    for task in unique_tasks:
-        all_task_results.append(modular_p.forward(task, states, targets, dropout_p=dropout_p))
-    all_task_results.apply(lambda _t: torch.stack(_t, dim=2))
-
-    # pad subtasks
-    subtasks = trajs.tasks
-
-    # results [bsz, len, nb_tasks]
-    results = DictList()
-    for batch_id, subtask in enumerate(subtasks):
-        curr_result = DictList()
-        for task in subtask:
-            task_id = unique_tasks.index(task)
-            curr_result.append(all_task_results[batch_id, :, task_id])
-
-        # [len, tasks]
-        curr_result.apply(lambda _t: torch.stack(_t, dim=1))
-        results.append(curr_result)
-    results.apply(lambda _t: torch.stack(_t, dim=0))
-
-    # Training
-    if not decode:
-        log_alphas = tac_forward_log(action_logprobs=results.action_logprobs,
-                                     stop_logprobs=results.stop_logprobs,
-                                     lengths=lengths,
-                                     subtask_lengths=subtask_lengths)
-        seq_logprobs = log_alphas[torch.arange(log_alphas.shape[0], device=log_alphas.device),
-                                  lengths - 1, subtask_lengths - 1]
-        avg_logprobs = seq_logprobs.sum() / lengths.sum()
-        return {'loss': -avg_logprobs}
-
-    # Decode
-    else:
-        alphas, _ = tac_forward(action_logprobs=results.action_logprobs,
-                                stop_logprobs=results.stop_logprobs,
-                                lengths=lengths, subtask_lengths=subtask_lengths)
-        decoded = alphas.argmax(-1)
-        batch_ids = torch.arange(decoded.shape[0], device=decoded.device).unsqueeze(-1).repeat(1, decoded.shape[1])
-        decoded_subtasks = subtasks[batch_ids, decoded]
-        total_task_corrects = 0
-        for idx, (subtask, decoded_subtask, action, length, gt) in enumerate(zip(subtasks, decoded_subtasks,
-                                                                                 trajs.actions, lengths,
-                                                                                 trajs.gt_onsets)):
-            _decoded_subtask = decoded_subtask[:length]
-            _action = action[:length]
-            gt = gt[:length]
-            total_task_corrects += (gt == _decoded_subtask).float().sum()
-        return {'task_acc': total_task_corrects / lengths.sum()}, {'tru': gt, 'act': _action,
-                                                                   'dec': _decoded_subtask}
-
-
-def evaluate_on_env(modular_p: ModularPolicy, sketch_length, max_steps_per_sketch, use_sketch_id=False):
+def evaluate_on_env(
+    modular_p: ModularPolicy, sketch_length, max_steps_per_sketch, use_sketch_id=False
+):
     start = time.time()
-    env = gym.make('jacopinpad-v0', sketch_length=sketch_length,
-                   max_steps_per_sketch=max_steps_per_sketch)
+    env = gym.make(
+        "jacopinpad-v0",
+        sketch_length=sketch_length,
+        max_steps_per_sketch=max_steps_per_sketch,
+    )
     device = next(modular_p.parameters()).device
     modular_p.eval()
     obs = DictList(env.reset())
@@ -177,12 +45,12 @@ def evaluate_on_env(modular_p: ModularPolicy, sketch_length, max_steps_per_sketc
             if not use_sketch_id:
                 action = modular_p.get_action(obs.state.unsqueeze(0))
             else:
-                action = modular_p.get_action(obs.state.unsqueeze(0),
-                                              sketch_idx=int(obs.sketch_idx.item()))
+                action = modular_p.get_action(
+                    obs.state.unsqueeze(0), sketch_idx=int(obs.sketch_idx.item())
+                )
             if action is not None:
                 next_obs, reward, done, _ = env.step(action.cpu().numpy()[0])
-                transition = {'reward': reward, 'action': action,
-                              'features': obs.state}
+                transition = {"reward": reward, "action": action, "features": obs.state}
                 traj.append(transition)
 
                 obs = DictList(next_obs)
@@ -192,13 +60,12 @@ def evaluate_on_env(modular_p: ModularPolicy, sketch_length, max_steps_per_sketc
     except MujocoException:
         pass
     end = time.time()
-    if 'reward' in traj:
-        return {'succs': np.sum(traj.reward),
-                'episode_length': len(traj.reward),
-                'ret': sum(env.local_score),
-                'runtime': end - start}
+    if "reward" in traj:
+        return {
+            "succs": np.sum(traj.reward),
+            "episode_length": len(traj.reward),
+            "ret": sum(env.local_score),
+            "runtime": end - start,
+        }
     else:
-        return {'succs': 0,
-                'episode_length': 0,
-                'ret': 0,
-                'runtime': end - start}
+        return {"succs": 0, "episode_length": 0, "ret": 0, "runtime": end - start}

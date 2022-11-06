@@ -17,6 +17,7 @@ flags.DEFINE_float('taco_dropout', default=0.3, help='Initial dropout rate')
 flags.DEFINE_float('taco_do_decay_ratio', default=0.8, help='use ratio * train_steps to decay')
 
 
+
 class DropoutScheduler:
     def __init__(self):
         self.init_do = FLAGS.taco_dropout

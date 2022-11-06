@@ -10,3 +10,4 @@ experiment
 experiment/.gitkeep
 MUJOCO_LOG.TXT
 slurm*.out
+wandb
